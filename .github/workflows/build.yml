@@ -44,17 +44,10 @@ jobs:
           }
           Get-ChildItem -Path "dist" -Recurse
           
-      - name: Install 7zip
-        run: choco install 7zip
-
-      - name: Compress build output using 7zip
-        run: |
-          & "C:\Program Files\7-Zip\7z.exe" a -tzip dist.zip dist\*
-
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: YuanBao-Desktop-Win64
-          path: dist.zip
+          path: dist/
           retention-days: 3
           if-no-files-found: error
