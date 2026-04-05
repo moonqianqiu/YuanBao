@@ -1,0 +1,50 @@
+{
+  "name": "yuanbao-app",
+  "version": "1.0.0",
+  "description": "腾讯元宝桌面版",
+  "main": "main.js",
+  "author": "YourName",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win --x64"
+  },
+  "build": {
+    "appId": "com.tencent.yuanbao.desktop",
+    "productName": "YuanBao",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "!dist/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/YB.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "assets/YB.ico",
+      "uninstallerIcon": "assets/YB.ico"
+    }
+  },
+  "devDependencies": {
+    "electron": "^40.2.1",
+    "electron-builder": "^26.7.0"
+  }
+}
