@@ -44,10 +44,22 @@ jobs:
           }
           Get-ChildItem -Path "dist" -Recurse
           
+      - name: Create zip of win-unpacked
+        run: |
+          $zipFileName = "YuanBao-Desktop-Win64.zip"
+          $unpackedFolder = "dist\win-unpacked"
+          if (Test-Path $unpackedFolder) {
+            Write-Host "Creating zip file for win-unpacked..."
+            Compress-Archive -Path $unpackedFolder -DestinationPath $zipFileName
+          } else {
+            Write-Error "win-unpacked 文件夹未找到"
+            exit 1
+          }
+          
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: YuanBao-Desktop-Win64
-          path: dist/
+          path: dist\YuanBao-Desktop-Win64.zip
           retention-days: 3
           if-no-files-found: error
