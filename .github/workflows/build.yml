@@ -43,11 +43,15 @@ jobs:
             exit 1
           }
           Get-ChildItem -Path "dist" -Recurse
+          
+      - name: Compress build output
+        run: |
+          Compress-Archive -Path dist\* -DestinationPath dist.zip
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: YuanBao-Desktop-Win64
-          path: dist/
+          path: dist.zip
           retention-days: 3
           if-no-files-found: error
