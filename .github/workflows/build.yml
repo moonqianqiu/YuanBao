@@ -44,9 +44,12 @@ jobs:
           }
           Get-ChildItem -Path "dist" -Recurse
           
-      - name: Compress build output
+      - name: Install 7zip
+        run: choco install 7zip
+
+      - name: Compress build output using 7zip
         run: |
-          Compress-Archive -Path dist\* -DestinationPath dist.zip
+          & "C:\Program Files\7-Zip\7z.exe" a -tzip dist.zip dist\*
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
