@@ -1,7 +1,7 @@
 name: Update Dependencies
 
 on:
-  workflow_dispatch: # 手动触发
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -19,11 +19,15 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install npm-check-updates
+        run: npm install -g npm-check-updates
 
-      - name: Update dependencies
-        run: npm update
+      - name: Update package.json dependencies
+        run: |
+          ncu -u
+
+      - name: Install updated dependencies
+        run: npm install
 
       - name: Commit and push updated dependencies
         run: |
@@ -31,6 +35,6 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json
           git commit -m "Update dependencies"
-          git push origin HEAD:main
+          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} HEAD:main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
