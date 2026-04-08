@@ -35,9 +35,9 @@ if (!gotTheLock) {
 function createWindow() {
     mainWindow = new BrowserWindow({
         width: 1024,
-        height: 576,
+        height: 640,
         minWidth: 640,
-        minHeight: 360,
+        minHeight: 400,
         title: "腾讯元宝",
         icon: path.join(__dirname, 'assets/YB.ico'),
         webPreferences: {
