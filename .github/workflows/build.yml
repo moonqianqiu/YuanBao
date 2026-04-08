@@ -35,7 +35,7 @@ jobs:
           Get-ChildItem -Path "dist" -Recurse
 
       - name: Create zip of win-unpacked
-        run: Compress-Archive -Path "dist\win-unpacked" -DestinationPath "YuanBao-Desktop-Win64.zip"
+        run: Compress-Archive -Path "dist\win-unpacked\*" -DestinationPath "YuanBao-Desktop-Win64.zip"
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
