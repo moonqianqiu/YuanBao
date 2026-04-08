@@ -46,13 +46,27 @@ jobs:
           
       - name: Create zip of win-unpacked
         run: |
+          $ErrorActionPreference = "Stop"
           $zipFileName = "YuanBao-Desktop-Win64.zip"
           $unpackedFolder = "dist\win-unpacked"
+          $workspacePath = $env:GITHUB_WORKSPACE
+          
           if (Test-Path $unpackedFolder) {
             Write-Host "Creating zip file for win-unpacked..."
-            Compress-Archive -Path $unpackedFolder -DestinationPath $zipFileName
+            Write-Host "Source folder: $unpackedFolder"
+            Write-Host "Output zip: $zipFileName"
+            
+            Compress-Archive -Path $unpackedFolder -DestinationPath $zipFileName -CompressionLevel Optimal -Force
+            
+            if (Test-Path $zipFileName) {
+              $zipSize = (Get-Item $zipFileName).Length / 1MB
+              Write-Host "Zip file created successfully. Size: $([math]::Round($zipSize, 2)) MB"
+            } else {
+              Write-Error "Zip file was not created"
+              exit 1
+            }
           } else {
-            Write-Error "win-unpacked 文件夹未找到"
+            Write-Error "win-unpacked 文件夹未找到: $unpackedFolder"
             exit 1
           }
           
@@ -60,6 +74,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: YuanBao-Desktop-Win64
-          path: dist\YuanBao-Desktop-Win64.zip
+          path: YuanBao-Desktop-Win64.zip
           retention-days: 3
           if-no-files-found: error
