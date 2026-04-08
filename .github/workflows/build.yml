@@ -49,48 +49,15 @@ jobs:
 
       - name: Create zip of win-unpacked
         run: |
-          $ErrorActionPreference = "Stop"
-          $workspacePath = $env:GITHUB_WORKSPACE
-          $projectRoot = $workspacePath
-          $zipFileName = "YuanBao-Desktop-Win64.zip"
-          $unpackedFolder = "dist\win-unpacked"
-          $tempZipPath = Join-Path $projectRoot $zipFileName
-
-          # 先切换到项目根目录
-          Set-Location $projectRoot
-
-          if (Test-Path $unpackedFolder) {
-            Write-Host "正在创建 win-unpacked 的 zip 文件..."
-            Write-Host "项目根目录: $projectRoot"
-            Write-Host "源文件夹: $unpackedFolder"
-            Write-Host "输出 zip: $tempZipPath"
-
-            # 先删除已存在的 zip 文件（如果存在）
-            if (Test-Path $tempZipPath) {
-              Write-Host "删除已存在的 zip 文件..."
-              Remove-Item $tempZipPath -Force
-            }
-
-            # 使用绝对路径确保正确压缩
-            $sourcePath = Join-Path $projectRoot $unpackedFolder
-            Compress-Archive -Path $sourcePath -DestinationPath $tempZipPath -CompressionLevel Optimal
-
-            # 验证 zip 文件是否创建成功
-            if (Test-Path $tempZipPath) {
-              $zipSize = (Get-Item $tempZipPath).Length / 1MB
-              Write-Host "Zip 文件创建成功。大小: $([math]::Round($zipSize, 2)) MB"
-
-              # 列出 zip 文件内容的前几个文件，确认不是双层压缩
-              Write-Host "验证 zip 文件内容（前 5 个文件）:"
-              Get-Item $tempZipPath | Expand-Archive -DestinationPath "$env:TEMP\test_zip" -Force
-              Get-ChildItem "$env:TEMP\test_zip" -Recurse | Select-Object -First 5 | ForEach-Object { Write-Host "  - $($_.FullName.Replace("$env:TEMP\test_zip\", ""))" }
-              Remove-Item "$env:TEMP\test_zip" -Recurse -Force -ErrorAction SilentlyContinue
-            } else {
-              Write-Error "Zip 文件未被创建"
-              exit 1
-            }
+          $zipFile = "YuanBao-Desktop-Win64.zip"
+          $source = "dist/win-unpacked"
+          
+          if (Test-Path $source) {
+            Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
+            Compress-Archive -Path $source -DestinationPath $zipFile -CompressionLevel Optimal
+            Write-Host "Zip created: $zipFile ($(Math::Round((Get-Item $zipFile).Length / 1MB, 2)) MB)"
           } else {
-            Write-Error "win-unpacked 文件夹未找到: $unpackedFolder"
+            Write-Error "win-unpacked 文件夹未找到"
             exit 1
           }
 
