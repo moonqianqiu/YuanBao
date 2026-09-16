@@ -38,7 +38,7 @@ jobs:
         run: Compress-Archive -Path "dist\win-unpacked\*" -DestinationPath "YuanBao-Desktop-Win64.zip"
 
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: YuanBao-Desktop-Win64
           path: YuanBao-Desktop-Win64.zip
