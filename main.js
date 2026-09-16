@@ -1,11 +1,12 @@
-const { app, BrowserWindow, Menu, MenuItem, clipboard } = require('electron');
+const { app, BrowserWindow, Menu, MenuItem, clipboard, shell, dialog } = require('electron');
 const path = require('path');
+const { URL } = require('url');
 
 // 全局引用，防止被垃圾回收
 let mainWindow = null;
 
-// 1. 设置全局 User-Agent
-const CUSTOM_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15";
+// 1. 设置全局 User-Agent：伪装成 macOS 上的 Chrome，版本号跟随 Electron 内核自动更新
+const CUSTOM_USER_AGENT = `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome} Safari/537.36`;
 app.userAgentFallback = CUSTOM_USER_AGENT;
 
 // 2. 单实例锁定逻辑
@@ -43,7 +44,8 @@ function createWindow() {
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
-			sandbox: true,
+            sandbox: true,
+            webviewTag: false,
             webSecurity: true
         },
         autoHideMenuBar: true
@@ -51,18 +53,32 @@ function createWindow() {
 
     mainWindow.loadURL('https://yuanbao.tencent.com');
 
-    mainWindow.on('closed', () => {
+    mainWindow.on('close', () => {
         mainWindow = null;
+    });
+
+    // 页面加载失败（如断网）时提示
+    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+        if (!isMainFrame || errorCode === -3) return; // 忽略子资源与主动中断
+        dialog.showErrorBox('加载失败', `页面加载失败（${errorDescription}），请检查网络后通过 Ctrl+R 重新加载。`);
     });
 
     // 处理新窗口打开
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-        if (url.includes('tencent.com')) {
+        let host = '';
+        try {
+            host = new URL(url).hostname;
+        } catch {
+            host = '';
+        }
+        if (host === 'yuanbao.tencent.com' || host.endsWith('.tencent.com')) {
             mainWindow.loadURL(url);
             return { action: 'deny' };
         }
-        // 使用 shell 打开外部链接
-        require('electron').shell.openExternal(url);
+        // 使用系统浏览器打开外部 https 链接
+        if (url.startsWith('https://')) {
+            shell.openExternal(url);
+        }
         return { action: 'deny' };
     });
 

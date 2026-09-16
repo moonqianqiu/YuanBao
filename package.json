@@ -16,8 +16,8 @@
       "output": "dist"
     },
     "files": [
-      "**/*",
-      "!dist/*"
+      "main.js",
+      "assets/**/*"
     ],
     "win": {
       "target": [
