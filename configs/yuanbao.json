@@ -30,7 +30,7 @@
   "nsis": {
     "oneClick": false,
     "allowToChangeInstallationDirectory": true,
-    "installerIcon": "assets/yuanbao.png",
-    "uninstallerIcon": "assets/yuanbao.png"
+    "installerIcon": "assets/yuanbao.ico",
+    "uninstallerIcon": "assets/yuanbao.ico"
   }
 }

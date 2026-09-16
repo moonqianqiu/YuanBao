@@ -30,7 +30,7 @@
   "nsis": {
     "oneClick": false,
     "allowToChangeInstallationDirectory": true,
-    "installerIcon": "assets/hunyuan.png",
-    "uninstallerIcon": "assets/hunyuan.png"
+    "installerIcon": "assets/hunyuan.ico",
+    "uninstallerIcon": "assets/hunyuan.ico"
   }
 }
