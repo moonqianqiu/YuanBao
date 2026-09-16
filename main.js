@@ -1,6 +1,71 @@
-const { app, BrowserWindow, Menu, MenuItem, clipboard, shell, dialog } = require('electron');
+const { app, BrowserWindow, Menu, MenuItem, clipboard, shell, dialog, session } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { URL } = require('url');
+
+// 站点配置：优先环境变量 CONFIG_FILE（开发模式），否则读打包注入的 resources/app-config.json
+// 找不到或格式非法时直接报错退出——静默兜底到其它站点会导致标题/白名单/账号全部错乱
+function loadAppConfig() {
+    const candidates = [];
+    if (process.env.CONFIG_FILE) {
+        candidates.push(path.resolve(__dirname, process.env.CONFIG_FILE));
+    }
+    if (process.resourcesPath) {
+        candidates.push(path.join(process.resourcesPath, 'app-config.json'));
+    }
+    // 仅开发模式提供默认配置；打包环境读不到即报错，避免退回错误站点
+    if (!app.isPackaged) {
+        candidates.push(path.join(__dirname, 'configs', 'yuanbao.app.json'));
+    }
+
+    const errors = [];
+    for (const file of candidates) {
+        try {
+            const config = JSON.parse(fs.readFileSync(file, 'utf8'));
+            if (!config.url) throw new Error('缺少 url 字段');
+            if (!config.title) throw new Error('缺少 title 字段');
+            if (!config.icon) throw new Error('缺少 icon 字段');
+            if (!Array.isArray(config.hostSuffixes) || config.hostSuffixes.length === 0) {
+                throw new Error('缺少 hostSuffixes 字段');
+            }
+            return config;
+        } catch (e) {
+            errors.push(`${file}: ${e.message}`);
+        }
+    }
+    dialog.showErrorBox('配置错误',
+        `应用站点配置读取失败，无法启动。\n\n${errors.join('\n')}\n\n请重新安装应用。`);
+    console.error('应用站点配置读取失败:', errors.join('\n'));
+    app.exit(1);
+    throw new Error('config load failed'); // app.exit 非同步，兜底确保 loadAppConfig 不返回 undefined
+}
+
+const APP_CONFIG = loadAppConfig();
+
+// 用户代理配置：优先级 userData/config.json > 打包内嵌 app-config.json 的 proxy 字段
+// 支持 "socks5://[user:pass@]host:port" / "http://host:port"，空则直连
+function loadUserConfig() {
+    try {
+        const file = path.join(app.getPath('userData'), 'config.json');
+        return JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch {
+        return {};
+    }
+}
+
+// 代理配置：支持 socks5://[user:pass@]host:port 或 http://host:port，空则系统默认
+function applyProxy() {
+    const raw = loadUserConfig().proxy;
+    const fallback = typeof APP_CONFIG.proxy === 'string' ? APP_CONFIG.proxy : '';
+    const proxy = (typeof raw === 'string' ? raw : fallback).trim();
+    try {
+        const rules = proxy ? proxy : undefined;
+        return session.defaultSession.setProxy({ proxyRules: rules, proxyBypassRules: '<local>' });
+    } catch (e) {
+        console.error('代理设置失败，回退系统代理:', e);
+        return session.defaultSession.setProxy({ mode: 'system' });
+    }
+}
 
 // 全局引用，防止被垃圾回收
 let mainWindow = null;
@@ -22,15 +87,25 @@ if (!gotTheLock) {
         }
     });
 
-    app.whenReady().then(() => {
+    app.whenReady().then(async () => {
+        await applyProxy();
         createWindow();
-        
+
         app.on('activate', () => {
             if (BrowserWindow.getAllWindows().length === 0) {
                 createWindow();
             }
         });
+    }).catch(err => {
+        dialog.showErrorBox('启动失败', String(err));
+        app.exit(1);
     });
+}
+
+function isTrustedHost(hostname) {
+    return (APP_CONFIG.hostSuffixes || []).some(suffix =>
+        hostname === suffix || hostname.endsWith('.' + suffix)
+    );
 }
 
 function createWindow() {
@@ -39,8 +114,8 @@ function createWindow() {
         height: 640,
         minWidth: 640,
         minHeight: 400,
-        title: "腾讯元宝",
-        icon: path.join(__dirname, 'assets/YB.ico'),
+        title: APP_CONFIG.title,
+        icon: path.join(__dirname, APP_CONFIG.icon),
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
@@ -66,7 +141,7 @@ function createWindow() {
         }
     });
 
-    mainWindow.loadURL('https://yuanbao.tencent.com');
+    mainWindow.loadURL(APP_CONFIG.url);
 
     mainWindow.on('close', () => {
         mainWindow = null;
@@ -75,7 +150,7 @@ function createWindow() {
     // 页面加载失败（如断网）时提示
     mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
         if (!isMainFrame || errorCode === -3) return; // 忽略子资源与主动中断
-        dialog.showErrorBox('加载失败', `页面加载失败（${errorDescription}），请检查网络后通过 Ctrl+R 重新加载。`);
+        dialog.showErrorBox('加载失败', `页面加载失败（${errorDescription}），请检查网络或代理配置后通过 Ctrl+R 重新加载。`);
     });
 
     // 处理新窗口打开
@@ -86,7 +161,7 @@ function createWindow() {
         } catch {
             host = '';
         }
-        if (host === 'yuanbao.tencent.com' || host.endsWith('.tencent.com')) {
+        if (isTrustedHost(host)) {
             mainWindow.loadURL(url);
             return { action: 'deny' };
         }

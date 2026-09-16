@@ -1,0 +1,36 @@
+{
+  "appId": "com.tencent.hunyuan.desktop",
+  "productName": "HunYuan",
+  "directories": {
+    "output": "dist"
+  },
+  "files": [
+    "main.js",
+    "assets/**/*"
+  ],
+  "extraResources": [
+    {
+      "from": "configs/aistudio.app.json",
+      "to": "app-config.json"
+    }
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      },
+      {
+        "target": "portable",
+        "arch": ["x64"]
+      }
+    ],
+    "icon": "assets/hunyuan.png"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "installerIcon": "assets/hunyuan.png",
+    "uninstallerIcon": "assets/hunyuan.png"
+  }
+}

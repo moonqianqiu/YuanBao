@@ -1,0 +1,7 @@
+{
+  "title": "腾讯元宝",
+  "url": "https://yuanbao.tencent.com",
+  "icon": "assets/yuanbao.png",
+  "hostSuffixes": ["tencent.com"],
+  "proxy": ""
+}

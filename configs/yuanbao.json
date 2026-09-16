@@ -1,0 +1,36 @@
+{
+  "appId": "com.tencent.yuanbao.desktop",
+  "productName": "YuanBao",
+  "directories": {
+    "output": "dist"
+  },
+  "files": [
+    "main.js",
+    "assets/**/*"
+  ],
+  "extraResources": [
+    {
+      "from": "configs/yuanbao.app.json",
+      "to": "app-config.json"
+    }
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      },
+      {
+        "target": "portable",
+        "arch": ["x64"]
+      }
+    ],
+    "icon": "assets/yuanbao.png"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "installerIcon": "assets/yuanbao.png",
+    "uninstallerIcon": "assets/yuanbao.png"
+  }
+}

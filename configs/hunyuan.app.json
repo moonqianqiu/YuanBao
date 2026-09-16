@@ -1,0 +1,7 @@
+{
+  "title": "Hy AI Studio",
+  "url": "https://aistudio.tencent.ai",
+  "icon": "assets/hunyuan.png",
+  "hostSuffixes": ["tencent.ai", "tencent.com"],
+  "proxy": ""
+}
