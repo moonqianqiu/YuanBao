@@ -51,6 +51,21 @@ function createWindow() {
         autoHideMenuBar: true
     });
 
+    // 快捷键：Ctrl+R / F5 重新加载，Ctrl+Shift+I 开发者工具
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+        if (input.type !== 'keyDown') return;
+        if (input.control && !input.shift && (input.key === 'r' || input.key === 'R')) {
+            mainWindow.webContents.reload();
+            event.preventDefault();
+        } else if (input.key === 'F5') {
+            mainWindow.webContents.reload();
+            event.preventDefault();
+        } else if (input.control && input.shift && (input.key === 'I' || input.key === 'i')) {
+            mainWindow.webContents.toggleDevTools();
+            event.preventDefault();
+        }
+    });
+
     mainWindow.loadURL('https://yuanbao.tencent.com');
 
     mainWindow.on('close', () => {
