@@ -10,7 +10,7 @@
   ],
   "extraResources": [
     {
-      "from": "configs/aistudio.app.json",
+      "from": "configs/hunyuan.app.json",
       "to": "app-config.json"
     }
   ],
