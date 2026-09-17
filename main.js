@@ -70,8 +70,9 @@ function applyProxy() {
 // 全局引用，防止被垃圾回收
 let mainWindow = null;
 
-// 1. 设置全局 User-Agent：伪装成 macOS 上的 Chrome，版本号跟随 Electron 内核自动更新
-const CUSTOM_USER_AGENT = `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome} Safari/537.36`;
+// 1. 设置全局 User-Agent：仿照目标格式，Chrome 版本号跟随 Electron 内核自动更新
+// 示例：Mozilla/5.0 (Macintosh; Intel Mac OS X 26_5_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.7977.83 Safari/537.36
+const CUSTOM_USER_AGENT = `Mozilla/5.0 (Macintosh; Intel Mac OS X 26_5_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome} Safari/537.36`;
 app.userAgentFallback = CUSTOM_USER_AGENT;
 
 // 2. 单实例锁定逻辑
