@@ -84,7 +84,7 @@ jobs:
             Write-Output "No proxy secret set for ${{ matrix.app }}, skipping"
           }
           if ($env:UA) {
-            $json.userAgent = $env:UA
+            $json | Add-Member -MemberType NoteProperty -Name userAgent -Value $env:UA -Force
             Write-Output "UA injected into $file"
           }
           $json | ConvertTo-Json -Depth 10 | Set-Content $file -Encoding UTF8
