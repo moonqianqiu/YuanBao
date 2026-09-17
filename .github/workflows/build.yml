@@ -29,6 +29,34 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Fetch latest Safari macOS UA (best effort)
+        shell: bash
+        run: |
+          URL="https://raw.githubusercontent.com/ray-lothian/UserAgent-Switcher/refs/heads/master/v3/data/popup/browsers/safari-mac%20os.json"
+          if UA=$(curl -sfL --max-time 30 "$URL"); then
+            BEST=$(printf '%s' "$UA" | node -e "
+              let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{
+                try{
+                  const list=JSON.parse(d);
+                  const best=list
+                    .map(e=>({ua:e.ua,ver:parseFloat(e.browser&&e.browser.version)}))
+                    .filter(e=>e.ua&&!isNaN(e.ver))
+                    .sort((a,b)=>b.ver-a.ver)[0];
+                  console.log(best?best.ua:'');
+                }catch{console.log('')}
+              });")
+            if [ -n "$BEST" ]; then
+              echo "UA=$BEST" >> "$GITHUB_ENV"
+              echo "Fetched UA: $BEST"
+            else
+              echo "UA parse failed, fallback to dynamic Chromium UA"
+              echo "UA=" >> "$GITHUB_ENV"
+            fi
+          else
+            echo "UA fetch failed, fallback to dynamic Chromium UA"
+            echo "UA=" >> "$GITHUB_ENV"
+          fi
+
       - name: Inject proxy from secrets (optional)
         env:
           PROXY_YUANBAO: ${{ secrets.YUANBAO_PROXY }}
@@ -47,15 +75,19 @@ jobs:
             exit 1
           }
           $proxy = $secretMap["${{ matrix.app }}"]
+          $file = $configMap["${{ matrix.app }}"]
+          $json = Get-Content $file -Raw | ConvertFrom-Json
           if ($proxy -and $proxy.Trim()) {
-            $file = $configMap["${{ matrix.app }}"]
-            $json = Get-Content $file -Raw | ConvertFrom-Json
             $json.proxy = $proxy.Trim()
-            $json | ConvertTo-Json -Depth 10 | Set-Content $file -Encoding UTF8
             Write-Output "Proxy injected into $file (value hidden)"
           } else {
             Write-Output "No proxy secret set for ${{ matrix.app }}, skipping"
           }
+          if ($env:UA) {
+            $json.userAgent = $env:UA
+            Write-Output "UA injected into $file"
+          }
+          $json | ConvertTo-Json -Depth 10 | Set-Content $file -Encoding UTF8
 
       - name: Build Electron App
         run: npx electron-builder --win --x64 --config ${{ matrix.config }}
