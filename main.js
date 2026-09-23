@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, MenuItem, clipboard, shell, dialog, session } = require('electron');
+const { app, BrowserWindow, Menu, MenuItem, clipboard, shell, dialog, session, webFrameMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { URL } = require('url');
@@ -69,11 +69,19 @@ function applyProxy() {
 
 // 全局引用，防止被垃圾回收
 let mainWindow = null;
+// window.open 创建的子窗口（登录弹窗等），持有引用防止被垃圾回收
+const popupWindows = new Set();
 
-// 1. 设置全局 User-Agent：
-// - app-config.json 提供 userAgent（CI 构建时从 UserAgent-Switcher 数据源取最新 Safari macOS UA 注入）则用之
-// - 否则回退：macOS Chrome 格式，版本号跟随 Electron 内核自动更新
-const FALLBACK_UA = `Mozilla/5.0 (Macintosh; Intel Mac OS X 26_5_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome} Safari/537.36`;
+// 1. 全局 User-Agent 与指纹一致性：
+// - UA 声称 macOS 上的 Chrome，版本号跟随 Electron 内核（与真实引擎版本一致，可通过站点的版本合理性校验）
+// - 仅改 UA 字符串不够：Chromium 仍会发送 Sec-CH-UA-Platform: "Windows" 等请求头，且 JS 层
+//   navigator.platform / userAgentData 仍是 Windows —— "Mac UA + Windows 平台"的矛盾指纹会被
+//   站点风控判定异常（页面加载失败 / 交互异常）。由 applyConsistentClientHints 与
+//   patchRendererFingerprint 把请求头和 JS 指纹统一对齐为 macOS。
+// - app-config.json 提供 userAgent（手动实验通道）则用之；CI 不再注入 Safari UA
+const MAC_OS_VERSION = '26_5_2';
+const MAC_PLATFORM_VERSION = '26.5.2';
+const FALLBACK_UA = `Mozilla/5.0 (Macintosh; Intel Mac OS X ${MAC_OS_VERSION}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome} Safari/537.36`;
 const CUSTOM_USER_AGENT = (typeof APP_CONFIG.userAgent === 'string' && APP_CONFIG.userAgent.trim())
     ? APP_CONFIG.userAgent.trim()
     : FALLBACK_UA;
@@ -94,6 +102,7 @@ if (!gotTheLock) {
 
     app.whenReady().then(async () => {
         await applyProxy();
+        applyConsistentClientHints();
         createWindow();
 
         app.on('activate', () => {
@@ -112,6 +121,140 @@ function isTrustedHost(hostname) {
         hostname === suffix || hostname.endsWith('.' + suffix)
     );
 }
+
+// 核心站点主机名：window.open 打开同域链接时复用主窗口（保持既有行为），其他可信域开子窗口
+const CORE_HOST = (() => {
+    try { return new URL(APP_CONFIG.url).hostname; } catch { return ''; }
+})();
+
+// 把 Chromium 自动附加的 Sec-CH-UA 系列头改写成与 UA 声明一致的 macOS Chrome 值。
+// 只改写实际存在的头：低熵三元组（UA/Mobile/Platform）只随导航请求发送、高熵头只随站点
+// Accept-CH 发送，全量补齐到所有请求反而制造新的异常指纹。
+function applyConsistentClientHints() {
+    const ver = process.versions.chrome;
+    const major = ver.split('.')[0];
+    const hints = {
+        'sec-ch-ua': `"Chromium";v="${major}", "Google Chrome";v="${major}", "Not?A_Brand";v="24"`,
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"macOS"',
+        'sec-ch-ua-full-version-list': `"Chromium";v="${ver}", "Google Chrome";v="${ver}", "Not?A_Brand";v="24.0.0.0"`,
+        'sec-ch-ua-platform-version': MAC_PLATFORM_VERSION,
+        'sec-ch-ua-model': '""'
+    };
+    session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+        const requestHeaders = {};
+        for (const [name, value] of Object.entries(details.requestHeaders)) {
+            requestHeaders[name] = hints[name.toLowerCase()] ?? value;
+        }
+        callback({ requestHeaders });
+    });
+}
+
+// 注入主世界的 JS 指纹补丁：navigator.platform / userAgentData 与 macOS 声明对齐。
+// 局限：dom-ready 时机覆盖不到站点最早的同步内联脚本；完全 document-start 覆盖需关闭
+// contextIsolation，安全代价不值得。
+const FINGERPRINT_PATCH = `
+(() => {
+    try {
+        if (navigator.platform !== 'MacIntel') {
+            Object.defineProperty(navigator, 'platform', { get: () => 'MacIntel', configurable: true });
+        }
+        // userAgentData 每次访问可能返回新实例，补丁必须打在原型上才能对所有实例生效
+        const proto = navigator.userAgentData && Object.getPrototypeOf(navigator.userAgentData);
+        if (proto && proto.constructor && proto.constructor.name === 'NavigatorUAData') {
+            const platDesc = Object.getOwnPropertyDescriptor(proto, 'platform');
+            if (platDesc && platDesc.configurable && platDesc.get) {
+                Object.defineProperty(proto, 'platform', { get: function () { return 'macOS'; }, configurable: true });
+            }
+            if (typeof proto.getHighEntropyValues === 'function') {
+                const orig = proto.getHighEntropyValues;
+                const mac = {
+                    platform: 'macOS',
+                    platformVersion: '${MAC_PLATFORM_VERSION}',
+                    architecture: 'x86',
+                    bitness: '64',
+                    model: '',
+                    wow64: false,
+                    formFactors: ['Desktop']
+                };
+                Object.defineProperty(proto, 'getHighEntropyValues', {
+                    value: function (hints) {
+                        return orig.call(this, hints).then((data) => {
+                            const out = { ...data };
+                            for (const key of hints) {
+                                if (key in mac) out[key] = mac[key];
+                            }
+                            return out;
+                        });
+                    },
+                    writable: true,
+                    configurable: true
+                });
+            }
+        }
+    } catch (e) {}
+})();`;
+
+function patchRendererFingerprint(contents) {
+    contents.executeJavaScript(FINGERPRINT_PATCH).catch(() => {});
+}
+
+// 所有窗口（主窗口 + 弹窗）统一处理：窗口打开策略、右键菜单、JS 指纹补丁
+app.on('web-contents-created', (event, contents) => {
+    contents.setWindowOpenHandler(({ url }) => {
+        let host = '';
+        try {
+            host = new URL(url).hostname;
+        } catch {
+            host = '';
+        }
+        if (isTrustedHost(host)) {
+            if (host === CORE_HOST && mainWindow && !mainWindow.isDestroyed()) {
+                // 核心站点的 _blank 链接维持原行为：复用主窗口
+                mainWindow.loadURL(url);
+                return { action: 'deny' };
+            }
+            // 其他可信域（qq.com 登录/授权弹窗等）开真正的子窗口，保住 window.opener 通信链路
+            return {
+                action: 'allow',
+                overrideBrowserWindowOptions: {
+                    autoHideMenuBar: true,
+                    webPreferences: {
+                        nodeIntegration: false,
+                        contextIsolation: true,
+                        sandbox: true,
+                        webviewTag: false,
+                        webSecurity: true
+                    }
+                }
+            };
+        }
+        // 使用系统浏览器打开外部 https 链接
+        if (url.startsWith('https://')) {
+            shell.openExternal(url);
+        }
+        return { action: 'deny' };
+    });
+
+    // 仅处理承载网页的顶层窗口，避免波及 DevTools 等内部 webContents
+    if (contents.getType() === 'window') {
+        contents.on('did-create-window', (win) => {
+            popupWindows.add(win);
+            win.on('closed', () => popupWindows.delete(win));
+        });
+
+        contents.on('dom-ready', () => patchRendererFingerprint(contents));
+
+        // 子 iframe（如登录二维码页）有独立的 navigator，也要打补丁；主框架已由 dom-ready 覆盖
+        contents.on('did-frame-finish-load', (event, isMainFrame, processId, routingId) => {
+            if (isMainFrame) return;
+            const frame = webFrameMain.fromId(processId, routingId);
+            if (frame) frame.executeJavaScript(FINGERPRINT_PATCH).catch(() => {});
+        });
+    }
+
+    setupContextMenu(contents);
+});
 
 function createWindow() {
     mainWindow = new BrowserWindow({
@@ -152,61 +295,33 @@ function createWindow() {
         mainWindow = null;
     });
 
-    // 页面加载失败（如断网）时提示
+    // 页面加载失败（如断网）时先自动重试一次，仍失败才提示，减少网络抖动时的模态打断
+    let autoRetryCount = 0;
+    mainWindow.webContents.on('did-finish-load', () => {
+        autoRetryCount = 0;
+    });
     mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
         if (!isMainFrame || errorCode === -3) return; // 忽略子资源与主动中断
+        if (autoRetryCount < 1) {
+            autoRetryCount++;
+            setTimeout(() => {
+                if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.reload();
+            }, 1500);
+            return;
+        }
         dialog.showErrorBox('加载失败', `页面加载失败（${errorDescription}），请检查网络或代理配置后通过 Ctrl+R 重新加载。`);
     });
-
-    // 处理新窗口打开
-    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-        let host = '';
-        try {
-            host = new URL(url).hostname;
-        } catch {
-            host = '';
-        }
-        if (isTrustedHost(host)) {
-            mainWindow.loadURL(url);
-            return { action: 'deny' };
-        }
-        // 使用系统浏览器打开外部 https 链接
-        if (url.startsWith('https://')) {
-            shell.openExternal(url);
-        }
-        return { action: 'deny' };
-    });
-
-    // 注册右键菜单
-    setupContextMenu(mainWindow);
 }
 
 // 右键菜单配置函数
-function setupContextMenu(window) {
-    window.webContents.on('context-menu', (event, params) => {
+function setupContextMenu(contents) {
+    contents.on('context-menu', (event, params) => {
         const menu = new Menu();
 
-        // 场景 A：选中了文本 -> 添加“复制”
-        if (params.selectionText && params.selectionText.trim() !== '') {
-            menu.append(new MenuItem({
-                label: '复制',
-                role: 'copy' // 使用 Electron 内置角色
-            }));
-        }
-
-        // 场景 B：点击了链接 -> 添加“复制链接”
-        if (params.linkURL && params.linkURL.trim() !== '') {
-            menu.append(new MenuItem({
-                label: '复制链接',
-                click: () => {
-                    // 使用剪贴板模块写入链接
-                    clipboard.writeText(params.linkURL);
-                }
-            }));
-        }
-
-        // 场景 C：输入框或可编辑区域（可选）
-        if (menu.items.length === 0 && params.isEditable) {
+        // 场景 A：输入框或可编辑区域 -> 完整编辑菜单。
+        // 不再要求"菜单为空"才追加：此前输入框内选中文字时只剩"复制"，丢失剪切/粘贴/全选。
+        // cut/copy 在无选区时由系统角色自行无效，无需判断。
+        if (params.isEditable) {
             menu.append(new MenuItem({ label: '撤销', role: 'undo' }));
             menu.append(new MenuItem({ label: '重做', role: 'redo' }));
             menu.append(new MenuItem({ type: 'separator' }));
@@ -214,12 +329,29 @@ function setupContextMenu(window) {
             menu.append(new MenuItem({ label: '复制', role: 'copy' }));
             menu.append(new MenuItem({ label: '粘贴', role: 'paste' }));
             menu.append(new MenuItem({ type: 'separator' }));
-            menu.append(new MenuItem({ label: '全选', role: 'selectall' }));
+            menu.append(new MenuItem({ label: '全选', role: 'selectAll' }));
+        } else if (params.selectionText && params.selectionText.trim() !== '') {
+            // 场景 B：非编辑区选中文本 -> "复制"
+            menu.append(new MenuItem({
+                label: '复制',
+                role: 'copy'
+            }));
+        }
+
+        // 场景 C：点击了链接 -> "复制链接"
+        if (params.linkURL && params.linkURL.trim() !== '') {
+            menu.append(new MenuItem({
+                label: '复制链接',
+                click: () => {
+                    clipboard.writeText(params.linkURL);
+                }
+            }));
         }
 
         // 如果菜单有内容，则弹出
         if (menu.items.length > 0) {
-            menu.popup(window, params.x, params.y);
+            const win = BrowserWindow.fromWebContents(contents);
+            menu.popup({ window: win, x: params.x, y: params.y });
         }
     });
 }

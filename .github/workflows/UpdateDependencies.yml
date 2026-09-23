@@ -18,6 +18,7 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: '24'
+          cache: 'npm'
 
       - name: Install npm-check-updates
         run: npm install -g npm-check-updates
@@ -26,21 +27,35 @@ jobs:
         run: |
           ncu -u
 
-      - name: Clean npm cache
-        run: npm cache clean --force
-        
-      - name: Delete node_modules and package-lock.json
+      - name: Install updated dependencies
         run: |
           rm -rf node_modules package-lock.json
+          npm install --no-fund
 
-      - name: Install updated dependencies
-        run: npm install
-
+      # audit 不作为门禁（失败不阻断推送），但结果必须可消费：
+      # 写入 step summary 并保存 JSON artifact，critical/high 漏洞在运行页直接可见
       - name: Run npm audit
-        run: npm audit --audit-level=high || true
-
-      - name: Run npm audit fix
-        run: npm audit fix || true
+        if: always()
+        run: |
+          npm audit --json > audit.json || true
+          node -e "
+            const fs = require('fs');
+            let a = {};
+            try { a = JSON.parse(fs.readFileSync('audit.json', 'utf8')); } catch {}
+            const v = a.metadata && a.metadata.vulnerabilities || {};
+            const line = (n) => v[n] || 0;
+            const rows = ['critical','high','moderate','low','info','total'].map(k => '| ' + k + ' | ' + line(k) + ' |').join('\n');
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,
+              '## npm audit\n\n| severity | count |\n|---|---|\n' + rows + '\n');
+          "
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: npm-audit-report
+          path: audit.json
+          retention-days: 7
+          if-no-files-found: warn
 
       - name: Commit and push updated dependencies
         run: |
@@ -48,6 +63,15 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add package.json package-lock.json
           git diff --cached --exit-code || git commit -m "Update dependencies"
-          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }} HEAD:main
+          # 远端在运行期间前进时 rebase 重试（最多 3 次），避免 push 直接失败丢提交
+          for i in 1 2 3; do
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            echo "push failed (attempt $i), rebasing and retrying..."
+            git pull --rebase origin main || exit 1
+          done
+          echo "push failed after 3 attempts" >&2
+          exit 1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

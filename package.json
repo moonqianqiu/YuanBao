@@ -15,5 +15,9 @@
   "devDependencies": {
     "electron": "^44.4.4",
     "electron-builder": "^26.15.3"
+  },
+  "allowScripts": {
+    "electron": true,
+    "electron-winstaller": true
   }
 }
