@@ -3,16 +3,17 @@
   "version": "1.0.0",
   "description": "腾讯元宝桌面版",
   "main": "main.js",
-  "author": "YourName",
-  "license": "MIT",
+  "author": "moonqianqiu",
+  "license": "GPL-3.0-only",
   "scripts": {
     "start": "electron .",
-    "start:hunyuan": "electron .",
+    "start:hunyuan": "cross-env CONFIG_FILE=configs/hunyuan.app.json electron .",
     "build": "electron-builder --win --x64 --config configs/yuanbao.json",
     "build:hunyuan": "electron-builder --win --x64 --config configs/hunyuan.json",
     "build:all": "npm run build && npm run build:hunyuan"
   },
   "devDependencies": {
+    "cross-env": "^10.1.0",
     "electron": "^44.5.1",
     "electron-builder": "^26.15.3"
   },

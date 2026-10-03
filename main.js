@@ -1,7 +1,6 @@
 const { app, BrowserWindow, Menu, MenuItem, clipboard, shell, dialog, session, webFrameMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { URL } = require('url');
 
 // 站点配置：优先环境变量 CONFIG_FILE（开发模式），否则读打包注入的 resources/app-config.json
 // 找不到或格式非法时直接报错退出——静默兜底到其它站点会导致标题/白名单/账号全部错乱
@@ -53,13 +52,39 @@ function loadUserConfig() {
     }
 }
 
-// 代理配置：支持 socks5://[user:pass@]host:port 或 http://host:port，空则系统默认
+// 代理配置：支持 socks5://[user:pass@]host:port 或 http://host:port，空则系统默认。
+// 格式非法时启动弹窗提示并直连，而不是静默忽略——少写协议前缀（如只写 host:port）是常见笔误
+const SUPPORTED_PROXY_SCHEMES = ['socks4:', 'socks5:', 'http:', 'https:'];
+
+function validateProxy(proxy) {
+    if (!proxy) return null;
+    let parsed;
+    try {
+        parsed = new URL(proxy);
+    } catch {
+        return `无法解析代理地址 "${proxy}"`;
+    }
+    if (!SUPPORTED_PROXY_SCHEMES.includes(parsed.protocol)) {
+        return `代理地址 "${proxy}" 需以 socks5:// 或 http:// 开头（当前协议为 "${parsed.protocol}"）`;
+    }
+    if (!parsed.hostname) {
+        return `代理地址 "${proxy}" 缺少主机名`;
+    }
+    return null;
+}
+
 function applyProxy() {
     const raw = loadUserConfig().proxy;
     const fallback = typeof APP_CONFIG.proxy === 'string' ? APP_CONFIG.proxy : '';
     const proxy = (typeof raw === 'string' ? raw : fallback).trim();
+    const problem = validateProxy(proxy);
+    if (problem) {
+        console.error('代理配置无效，本次启动直连:', problem);
+        dialog.showErrorBox('代理配置无效',
+            `${problem}\n\n支持格式：socks5://[user:pass@]host:port 或 http://host:port。\n请修正 userData/config.json（或站点配置的 proxy 字段）后重启。`);
+    }
     try {
-        const rules = proxy ? proxy : undefined;
+        const rules = problem ? undefined : (proxy || undefined);
         return session.defaultSession.setProxy({ proxyRules: rules, proxyBypassRules: '<local>' });
     } catch (e) {
         console.error('代理设置失败，回退系统代理:', e);
@@ -120,6 +145,12 @@ function isTrustedHost(hostname) {
     return (APP_CONFIG.hostSuffixes || []).some(suffix =>
         hostname === suffix || hostname.endsWith('.' + suffix)
     );
+}
+
+// DevTools 的 webContents 有自己的窗口打开与右键菜单逻辑，按 URL 识别后跳过，
+// 避免下面的全局处理器干扰 DevTools 内部行为
+function isDevToolsContents(contents) {
+    return contents.getURL().startsWith('devtools://');
 }
 
 // 核心站点主机名：window.open 打开同域链接时复用主窗口（保持既有行为），其他可信域开子窗口
@@ -202,6 +233,8 @@ function patchRendererFingerprint(contents) {
 // 所有窗口（主窗口 + 弹窗）统一处理：窗口打开策略、右键菜单、JS 指纹补丁
 app.on('web-contents-created', (event, contents) => {
     contents.setWindowOpenHandler(({ url }) => {
+        // DevTools 打开自己的子窗口（如从控制台查看）走默认行为
+        if (isDevToolsContents(contents)) return { action: 'allow' };
         let host = '';
         try {
             host = new URL(url).hostname;
@@ -238,6 +271,19 @@ app.on('web-contents-created', (event, contents) => {
 
     // 仅处理承载网页的顶层窗口，避免波及 DevTools 等内部 webContents
     if (contents.getType() === 'window') {
+        // 渲染进程崩溃（crashed/oom 等）时自动重载一次；连续崩溃不再重试，改弹窗提示
+        let crashReloaded = false;
+        contents.on('did-finish-load', () => { crashReloaded = false; });
+        contents.on('render-process-gone', (event, details) => {
+            if (contents.isDestroyed() || details.reason === 'clean-exit') return;
+            if (!crashReloaded) {
+                crashReloaded = true;
+                contents.reload();
+            } else {
+                dialog.showErrorBox('页面崩溃', `渲染进程异常退出（${details.reason}），请通过 Ctrl+R 重新加载。`);
+            }
+        });
+
         contents.on('did-create-window', (win) => {
             popupWindows.add(win);
             win.on('closed', () => popupWindows.delete(win));
@@ -316,6 +362,7 @@ function createWindow() {
 // 右键菜单配置函数
 function setupContextMenu(contents) {
     contents.on('context-menu', (event, params) => {
+        if (isDevToolsContents(contents)) return; // DevTools 自带右键菜单
         const menu = new Menu();
 
         // 场景 A：输入框或可编辑区域 -> 完整编辑菜单。
