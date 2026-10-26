@@ -2,19 +2,43 @@ name: Build Electron App
 
 on:
   workflow_dispatch: # 手动触发
+    inputs:
+      app:
+        description: '选择要构建的应用'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - YuanBao
+          - HunYuan
 
 jobs:
+  # 依据输入动态生成构建矩阵：只选单个应用时跳过另一个，job 级 if 拿不到 matrix 上下文，
+  # 故先在轻量 ubuntu job 里算出矩阵再传给 build
+  targets:
+    name: Pick build targets
+    runs-on: ubuntu-latest
+    outputs:
+      include: ${{ steps.pick.outputs.include }}
+    steps:
+      - id: pick
+        run: |
+          case "${{ github.event.inputs.app }}" in
+            YuanBao) include='[{"app":"YuanBao","config":"configs/yuanbao.json"}]' ;;
+            HunYuan) include='[{"app":"HunYuan","config":"configs/hunyuan.json"}]' ;;
+            *)       include='[{"app":"YuanBao","config":"configs/yuanbao.json"},{"app":"HunYuan","config":"configs/hunyuan.json"}]' ;;
+          esac
+          echo "include=$include" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: targets
     name: Build ${{ matrix.app }} Windows x64
     runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - app: YuanBao
-            config: configs/yuanbao.json
-          - app: HunYuan
-            config: configs/hunyuan.json
+        include: ${{ fromJSON(needs.targets.outputs.include) }}
 
     steps:
       - name: Checkout repository
