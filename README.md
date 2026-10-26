@@ -12,7 +12,7 @@
 ## 功能
 
 - 站点白名单内的链接在应用内打开；`qq.com` 等登录/授权弹窗开真正的子窗口（保留 `window.opener` 通信链路）；白名单外的 https 链接交给系统浏览器
-- 浏览器指纹一致性：User-Agent、`Sec-CH-UA` 请求头、`navigator.platform` / `userAgentData` 统一对齐为 macOS Chrome，版本号跟随 Electron 内核
+- 浏览器指纹对齐真实 Chrome：保持 Windows 原生指纹自洽，UA 去除 Electron 标识并冻结版本号（`N.0.0.0`），`Sec-CH-UA` 请求头与 `navigator.userAgentData` 补齐 `Google Chrome` 品牌
 - 单实例运行，重复启动自动唤起已有窗口
 - 右键菜单：编辑区完整编辑操作、选中文本复制、复制链接
 - 页面加载失败先自动重试一次，仍失败才弹窗提示；渲染进程崩溃时自动重载一次

@@ -97,16 +97,18 @@ let mainWindow = null;
 // window.open 创建的子窗口（登录弹窗等），持有引用防止被垃圾回收
 const popupWindows = new Set();
 
-// 1. 全局 User-Agent 与指纹一致性：
-// - UA 声称 macOS 上的 Chrome，版本号跟随 Electron 内核（与真实引擎版本一致，可通过站点的版本合理性校验）
-// - 仅改 UA 字符串不够：Chromium 仍会发送 Sec-CH-UA-Platform: "Windows" 等请求头，且 JS 层
-//   navigator.platform / userAgentData 仍是 Windows —— "Mac UA + Windows 平台"的矛盾指纹会被
-//   站点风控判定异常（页面加载失败 / 交互异常）。由 applyConsistentClientHints 与
-//   patchRendererFingerprint 把请求头和 JS 指纹统一对齐为 macOS。
-// - app-config.json 提供 userAgent（手动实验通道）则用之；CI 不再注入 Safari UA
-const MAC_OS_VERSION = '26_5_2';
-const MAC_PLATFORM_VERSION = '26.5.2';
-const FALLBACK_UA = `Mozilla/5.0 (Macintosh; Intel Mac OS X ${MAC_OS_VERSION}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${process.versions.chrome} Safari/537.36`;
+// 1. 全局 User-Agent 与指纹策略：对齐真实 Windows Chrome（原生指纹，不做平台伪装）。
+// 伪装平台（如 Mac UA）会与 Windows 原生的 WebGL 渲染器（Direct3D）、JS 平台特征等留下
+// 无法对齐的矛盾指纹，被站点 Bot 管理识别（如腾讯 EdgeOne 567 拦截页）。这里只做两处
+// "去 Electron 化"修正，与真实 Chrome 对齐：
+// - UA 去掉 Electron 默认的 "Electron/x.y.z" 标识；Chrome 版本冻结为 N.0.0.0（Chrome 107+
+//   桌面端 UA 已约简，平台恒为 "Windows NT 10.0; Win64; x64"，完整版本只经
+//   Sec-CH-UA-Full-Version(-List) 传递）
+// - Sec-CH-UA 品牌列表与 navigator.userAgentData 补上 "Google Chrome" 品牌（真实 Chrome
+//   恒携带、Electron 不带），由 applyConsistentClientHints 与 patchRendererFingerprint 完成
+// - app-config.json 提供 userAgent（手动实验通道）则用之
+const CHROME_MAJOR = process.versions.chrome.split('.')[0];
+const FALLBACK_UA = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_MAJOR}.0.0.0 Safari/537.36`;
 const CUSTOM_USER_AGENT = (typeof APP_CONFIG.userAgent === 'string' && APP_CONFIG.userAgent.trim())
     ? APP_CONFIG.userAgent.trim()
     : FALLBACK_UA;
@@ -158,70 +160,74 @@ const CORE_HOST = (() => {
     try { return new URL(APP_CONFIG.url).hostname; } catch { return ''; }
 })();
 
-// 把 Chromium 自动附加的 Sec-CH-UA 系列头改写成与 UA 声明一致的 macOS Chrome 值。
-// 只改写实际存在的头：低熵三元组（UA/Mobile/Platform）只随导航请求发送、高熵头只随站点
-// Accept-CH 发送，全量补齐到所有请求反而制造新的异常指纹。
+// Sec-CH-UA 品牌列表补齐：在 Electron 原生发送的品牌列表（含 Chromium 自动生成的 grease
+// 随机品牌，各版本取值不同，不能硬编码）基础上插入 "Google Chrome" 品牌，与真实 Chrome 一致。
+// 平台类 hints（sec-ch-ua-platform / -platform-version / -mobile 等）在 Windows 上原生自洽，
+// 保持原值不改写。
 function applyConsistentClientHints() {
-    const ver = process.versions.chrome;
-    const major = ver.split('.')[0];
-    const hints = {
-        'sec-ch-ua': `"Chromium";v="${major}", "Google Chrome";v="${major}", "Not?A_Brand";v="24"`,
-        'sec-ch-ua-mobile': '?0',
-        'sec-ch-ua-platform': '"macOS"',
-        'sec-ch-ua-full-version-list': `"Chromium";v="${ver}", "Google Chrome";v="${ver}", "Not?A_Brand";v="24.0.0.0"`,
-        'sec-ch-ua-platform-version': MAC_PLATFORM_VERSION,
-        'sec-ch-ua-model': '""'
+    const addChromeBrand = (value, version) => {
+        if (typeof value !== 'string' || !value || /google chrome/i.test(value)) return value;
+        return value.replace(/"Chromium";v="\d+(?:\.\d+)*"/, m => `${m}, "Google Chrome";v="${version}"`);
     };
     session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
         const requestHeaders = {};
         for (const [name, value] of Object.entries(details.requestHeaders)) {
-            requestHeaders[name] = hints[name.toLowerCase()] ?? value;
+            const lower = name.toLowerCase();
+            if (lower === 'sec-ch-ua') {
+                requestHeaders[name] = addChromeBrand(value, CHROME_MAJOR);
+            } else if (lower === 'sec-ch-ua-full-version-list') {
+                requestHeaders[name] = addChromeBrand(value, process.versions.chrome);
+            } else {
+                requestHeaders[name] = value;
+            }
         }
         callback({ requestHeaders });
     });
 }
 
-// 注入主世界的 JS 指纹补丁：navigator.platform / userAgentData 与 macOS 声明对齐。
+// 注入主世界的 JS 指纹补丁：navigator.userAgentData.brands 与 getHighEntropyValues 的
+// fullVersionList 补上 "Google Chrome" 品牌，与请求头补齐后的形态一致（Electron 原生只报
+// Chromium）。平台相关值在 Windows 上原生自洽，不改写。
 // 局限：dom-ready 时机覆盖不到站点最早的同步内联脚本；完全 document-start 覆盖需关闭
 // contextIsolation，安全代价不值得。
 const FINGERPRINT_PATCH = `
 (() => {
     try {
-        if (navigator.platform !== 'MacIntel') {
-            Object.defineProperty(navigator, 'platform', { get: () => 'MacIntel', configurable: true });
-        }
-        // userAgentData 每次访问可能返回新实例，补丁必须打在原型上才能对所有实例生效
         const proto = navigator.userAgentData && Object.getPrototypeOf(navigator.userAgentData);
-        if (proto && proto.constructor && proto.constructor.name === 'NavigatorUAData') {
-            const platDesc = Object.getOwnPropertyDescriptor(proto, 'platform');
-            if (platDesc && platDesc.configurable && platDesc.get) {
-                Object.defineProperty(proto, 'platform', { get: function () { return 'macOS'; }, configurable: true });
-            }
-            if (typeof proto.getHighEntropyValues === 'function') {
-                const orig = proto.getHighEntropyValues;
-                const mac = {
-                    platform: 'macOS',
-                    platformVersion: '${MAC_PLATFORM_VERSION}',
-                    architecture: 'x86',
-                    bitness: '64',
-                    model: '',
-                    wow64: false,
-                    formFactors: ['Desktop']
-                };
-                Object.defineProperty(proto, 'getHighEntropyValues', {
-                    value: function (hints) {
-                        return orig.call(this, hints).then((data) => {
-                            const out = { ...data };
-                            for (const key of hints) {
-                                if (key in mac) out[key] = mac[key];
-                            }
-                            return out;
-                        });
-                    },
-                    writable: true,
-                    configurable: true
-                });
-            }
+        if (!proto) return;
+        const major = '${CHROME_MAJOR}';
+        // brands / fullVersionList 每次访问可能返回新实例，补丁必须打在原型上才能对所有实例生效
+        const patchBrands = (brands) => {
+            if (!Array.isArray(brands)) return brands;
+            if (brands.some(b => b && String(b.brand).toLowerCase() === 'google chrome')) return brands;
+            const chromiumIdx = brands.findIndex(b => b && String(b.brand).toLowerCase() === 'chromium');
+            const version = (chromiumIdx >= 0 && brands[chromiumIdx].version) ? brands[chromiumIdx].version : major;
+            const patched = brands.slice();
+            patched.splice(chromiumIdx + 1, 0, { brand: 'Google Chrome', version: version });
+            return patched;
+        };
+        const brandsDesc = Object.getOwnPropertyDescriptor(proto, 'brands');
+        if (brandsDesc && brandsDesc.configurable && brandsDesc.get) {
+            Object.defineProperty(proto, 'brands', {
+                get: function () { return patchBrands(brandsDesc.get.call(this)); },
+                configurable: true
+            });
+        }
+        if (typeof proto.getHighEntropyValues === 'function') {
+            const orig = proto.getHighEntropyValues;
+            Object.defineProperty(proto, 'getHighEntropyValues', {
+                value: function (hints) {
+                    return orig.call(this, hints).then((data) => {
+                        const out = { ...data };
+                        if (Array.isArray(hints) && hints.includes('fullVersionList')) {
+                            out.fullVersionList = patchBrands(out.fullVersionList);
+                        }
+                        return out;
+                    });
+                },
+                writable: true,
+                configurable: true
+            });
         }
     } catch (e) {}
 })();`;
