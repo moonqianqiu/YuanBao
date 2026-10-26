@@ -59,7 +59,7 @@ npm run build:all      # 两个都打
 
 ### CI 构建
 
-仓库不发布 Release，请从 GitHub Actions 下载：进入 `Build Electron App` workflow 的运行页（手动触发），在 Artifacts 区下载 `YuanBao-Desktop-Win64` 或 `HunYuan-Desktop-Win64`（保留 3 天）。
+仓库不发布 Release，请从 GitHub Actions 下载：进入 `Build Electron App` workflow 的运行页（手动触发），在 Artifacts 区下载 `YuanBao` 或 `HunYuan`（浏览器保存为 `YuanBao.zip` / `HunYuan.zip`，保留 3 天）。构建时可选择只构建单个应用。
 
 CI 支持通过 Secrets `YUANBAO_PROXY` / `HUNYUAN_PROXY` 在构建时为对应应用注入默认代理（可选，不设置则使用配置文件中的值）。
 

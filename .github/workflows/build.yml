@@ -103,7 +103,7 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.app }}-Desktop-Win64
+          name: ${{ matrix.app }}
           path: stage/${{ matrix.app }}
           retention-days: 3
           if-no-files-found: error
